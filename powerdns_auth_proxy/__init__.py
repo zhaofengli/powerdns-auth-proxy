@@ -40,9 +40,10 @@ def split_config_values(config, section_pattern):
     {'foo': {'key': 'bar', 'baz': ['qux', 'thud']}}
     """
 
+    SPECIAL_KEYS = ["allowed-zone-fn", "allowed-rrset-fn"]
     return {
         section[len(section_pattern) :]: {
-            key.lower(): (value.split() if " " in value else value)
+            key.lower(): (value.split() if " " in value and key.lower() not in SPECIAL_KEYS else value)
             for key, value in config.items(section)
         }
         for section in config.sections()

@@ -5,7 +5,7 @@ from functools import wraps
 from flask import Blueprint, Response, current_app, g, request
 from requests import Request, Session
 from requests.structures import CaseInsensitiveDict
-from werkzeug.exceptions import Forbidden, NotFound
+from werkzeug.exceptions import Forbidden, NotFound, BadRequest
 
 bp = Blueprint("proxy", __name__, url_prefix="/api")
 
@@ -109,6 +109,39 @@ def authenticate(f):
 
 ## Proxy helper methods
 
+def zone_allowed(zone):
+    """
+    Check whether the user is authorized to manipulate a zone.
+    """
+    if "allowed-zones" in g.user:
+        if isinstance(g.user["allowed-zones"], list):
+            allowed = g.user["allowed-zones"]
+        else:
+            allowed = [g.user["allowed-zones"]]
+
+        if zone["name"] in allowed:
+            return True
+
+    if "allowed-zone-fn" in g.user:
+        # Dangerous!
+        fn = eval(g.user["allowed-zone-fn"])
+        if fn(zone):
+            return True
+
+    return False
+
+def rrset_allowed(zone, rrset):
+    """
+    Check whether the user is authorized to submit this rrset,
+    assuming they have access to the containing zone.
+    """
+    if "allowed-rrset-fn" in g.user:
+        # Dangerous!
+        fn = eval(g.user["allowed-rrset-fn"])
+        if not fn(zone, rrset):
+            return False
+
+    return True
 
 def sanitise_metadata_updates(json, config):
     """
@@ -122,8 +155,12 @@ def sanitise_metadata_updates(json, config):
     }.items():
         json[key] = value
 
-    # always override the account name with the right one for the logged in user
-    json["account"] = g.username
+    if "trusted-meta" in g.user:
+        if g.user["trusted-meta"] != "True":
+            raise ValueError("trusted-meta can only be set to true (or not set at all)")
+        # Don't override account
+    else:
+        json["account"] = g.user["account"]
 
     return json
 
@@ -222,21 +259,26 @@ def statistics():
 @json_response
 def zone_list():
     """
-    GET: Retrieve a list of zones that exist and belong to this account.
+    GET: Retrieve a list of zones that exist and the user is authorized to manipulate.
     POST: Create a new zone for this account.
     """
+
     if request.method == "GET":
         try:
             zones = [
                 zone
                 for zone in json_or_none(proxy_to_backend("GET", "zones"))
-                if zone["account"] == g.username
+                if zone_allowed(zone)
             ]
         except TypeError:
             zones = []
         return zones
     elif request.method == "POST":
         requested_name = g.json.get("name", None)
+
+        if "account" not in g.user or not g.user["account"]:
+            raise Forbidden
+
         if "allow-suffix-creation" in g.user:
             allowed_suffixes = (
                 g.user["allow-suffix-creation"]
@@ -276,16 +318,28 @@ def zone_detail(requested_zone):
     DELETE: Delete a zone immediately.
     """
     zone = json_or_none(proxy_to_backend("GET", "zones/%s" % requested_zone))
-    if zone and zone.get("account", None) != g.username:
+
+    if zone and not zone_allowed(zone):
         raise Forbidden
 
     if request.method == "GET":  # get metadata
         return zone
     elif request.method == "PATCH":  # update rrsets
+        if "rrsets" not in g.json or not isinstance(g.json["rrsets"], list):
+            raise BadRequest
+
+        for rrset in g.json["rrsets"]:
+            if not rrset_allowed(zone, rrset):
+                # FIXME: Error reporting
+                raise Forbidden
+
         return proxy_to_backend(
             "PATCH", "zones/%s" % requested_zone, json.dumps(dict(g.json))
         )
     elif request.method == "PUT":  # update metadata
+        if "account" not in g.user or not g.user["account"]:
+            raise Forbidden
+
         g.json = sanitise_metadata_updates(g.json, current_app.config["PDNS"])
         return proxy_to_backend(
             "PUT", "zones/%s" % requested_zone, json.dumps(dict(g.json))
@@ -304,7 +358,7 @@ def zone_notify(requested_zone):
     PUT: Queue a zone for notification to replicas.
     """
     zone = json_or_none(proxy_to_backend("GET", "zones/%s" % requested_zone))
-    if zone and zone.get("account", None) != g.username:
+    if zone and not zone_allowed(zone["name"]):
         raise Forbidden
 
     return proxy_to_backend("PUT", "zones/%s/notify" % requested_zone, None)
