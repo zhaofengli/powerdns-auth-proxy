@@ -345,6 +345,12 @@ def zone_detail(requested_zone):
             "PUT", "zones/%s" % requested_zone, json.dumps(dict(g.json))
         )
     elif request.method == "DELETE":  # delete zone
+        if "allow-zone-deletion" in g.user:
+            if g.user["allow-zone-deletion"] != "True":
+                raise ValueError("allow-zone-deletion can only be set to true (or not set at all)")
+        else:
+            raise Forbidden
+
         return proxy_to_backend(
             "DELETE", "zones/%s" % requested_zone, json.dumps(dict(g.json))
         )

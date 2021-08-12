@@ -51,6 +51,9 @@ allowed-zones = example.org. another.zone.com.
 # Be careful - This is eval()'d!
 allowed-zone-fn = lambda zone: do_stuff_and_return_a_boolean(zone)
 
+# If set to "True", then this user can delete zones they have access to
+allow-zone-deletion = True
+
 # If not specified, the user can manipulate any record in the allowed zones
 #
 # For structure of `rrset`, refer to:
