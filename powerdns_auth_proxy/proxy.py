@@ -5,7 +5,7 @@ from functools import wraps
 from flask import Blueprint, Response, current_app, g, request
 from requests import Request, Session
 from requests.structures import CaseInsensitiveDict
-from werkzeug.exceptions import Forbidden, NotFound, BadRequest
+from werkzeug.exceptions import Forbidden, NotFound, BadRequest, NotImplemented
 
 bp = Blueprint("proxy", __name__, url_prefix="/api")
 
@@ -368,3 +368,27 @@ def zone_notify(requested_zone):
         raise Forbidden
 
     return proxy_to_backend("PUT", "zones/%s/notify" % requested_zone, None)
+
+@bp.route("/v1/servers/localhost/zones/<string:requested_zone>/cryptokeys", methods=["GET", "POST"])
+@authenticate
+@json_response
+def zone_cryptokeys(requested_zone):
+    """
+    GET: Get all cryptokeys
+    POST: Create a Cryptokey
+    """
+
+    zone = json_or_none(proxy_to_backend("GET", "zones/%s" % requested_zone))
+    if zone and not zone_allowed(zone["name"]):
+        raise Forbidden
+
+    if request.method != "GET":
+        raise NotImplemented
+
+    return proxy_to_backend(request.method, "zones/%s/cryptokeys" % requested_zone, None)
+
+@bp.route("/v1/servers/localhost/zones/<string:requested_zone>/cryptokeys/<string:key_name>", methods=["GET", "POST", "DELETE"])
+@authenticate
+@json_response
+def zone_cryptokeys_detail(requested_zone):
+    raise NotImplemented
